@@ -1,90 +1,62 @@
-import psutil
-import time
+"""Log process snapshots using Windows tasklist and Python's standard library."""
+
 import csv
+import subprocess
+import time
 from datetime import datetime
+from pathlib import Path
 
-CPU_THRESHOLD = 50
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common.paths import ACTIVITY_COLUMNS, ACTIVITY_LOG, ensure_project_dirs
 
-suspicious_keywords = [
-    "hack",
-    "inject",
-    "malware",
-    "trojan",
-    "rat",
-    "keylogger"
-]
+SUSPICIOUS_KEYWORDS = ("hack", "inject", "malware", "trojan", "rat", "keylogger")
+INTERVAL_SECONDS = 5
 
-LOG_FILE = "logs/activity_log.csv"
 
-def check_suspicious_process(name):
+def get_processes():
+    """Return Windows process records from tasklist's CSV output."""
+    result = subprocess.run(
+        ["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", check=True,
+    )
+    for item in csv.reader(result.stdout.splitlines()):
+        if len(item) >= 5:
+            name, pid, _session, _session_number, memory = item[:5]
+            memory_mb = float(memory.replace(",", "").replace(" K", "")) / 1024
+            yield {"pid": int(pid), "name": name, "memory_mb": memory_mb}
 
-    name = name.lower()
-
-    for keyword in suspicious_keywords:
-        if keyword in name:
-            return True
-
-    return False
 
 def log_activity(timestamp, pid, name, cpu, memory, status):
+    ensure_project_dirs()
+    write_header = not ACTIVITY_LOG.exists() or ACTIVITY_LOG.stat().st_size == 0
+    with ACTIVITY_LOG.open("a", newline="", encoding="utf-8") as target:
+        writer = csv.writer(target)
+        if write_header:
+            writer.writerow(ACTIVITY_COLUMNS)
+        writer.writerow([timestamp, pid, name, f"{cpu:.2f}", f"{memory:.2f}", status])
 
-    with open(LOG_FILE, mode='a', newline='') as file:
-
-        writer = csv.writer(file)
-
-        writer.writerow([
-            timestamp,
-            pid,
-            name,
-            cpu,
-            f"{memory:.2f}",
-            status
-        ])
 
 def monitor_processes():
+    if sys.platform != "win32":
+        raise SystemExit("The built-in process monitor currently supports Windows only.")
+    print("Standard-library process monitor started. Press Ctrl+C to stop.")
+    previous = {}
+    try:
+        while True:
+            now = time.monotonic()
+            processes = list(get_processes())
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            for process in processes:
+                pid, name = process["pid"], process["name"]
+                cpu = 0.0
+                status = "SUSPICIOUS" if any(key in name.lower() for key in SUSPICIOUS_KEYWORDS) else "SAFE"
+                log_activity(timestamp, pid, name, cpu, process["memory_mb"], status)
+            print(f"Logged {len(processes)} processes at {timestamp} (CPU unavailable; memory is logged in MB).")
+            time.sleep(INTERVAL_SECONDS)
+    except KeyboardInterrupt:
+        print("\nProcess monitor stopped.")
 
-    print("=" * 70)
-    print("DarkComet RAT Behavioral Analyzer Using AI - Logging Process Monitor")
-    print("=" * 70)
 
-    while True:
-
-        print("\nScanning Running Processes...\n")
-
-        for process in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
-
-            try:
-                pid = process.info['pid']
-                name = process.info['name']
-                cpu = process.info['cpu_percent']
-                memory = process.info['memory_percent']
-
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-                status = "SAFE"
-
-                print(f"PID: {pid} | {name} | CPU: {cpu}% | Memory: {memory:.2f}%")
-
-                if cpu > CPU_THRESHOLD:
-                    print(f"[WARNING] High CPU Usage Detected -> {name}")
-                    status = "HIGH_CPU"
-
-                if check_suspicious_process(name):
-                    print(f"[ALERT] Suspicious Process Name Detected -> {name}")
-                    status = "SUSPICIOUS"
-
-                log_activity(timestamp, pid, name, cpu, memory, status)
-
-            except (
-                psutil.NoSuchProcess,
-                psutil.AccessDenied,
-                psutil.ZombieProcess
-            ):
-                pass
-
-        print("\nLogs Saved Successfully...")
-        print("Next Scan In 5 Seconds...\n")
-
-        time.sleep(5)
-
-monitor_processes()
+if __name__ == "__main__":
+    monitor_processes()

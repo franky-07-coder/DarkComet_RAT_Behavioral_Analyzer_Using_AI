@@ -1,0 +1,2 @@
+# No third-party packages required. The dashboard, monitor, and detector use
+# Python's standard library so this project works in the selected Python venv.

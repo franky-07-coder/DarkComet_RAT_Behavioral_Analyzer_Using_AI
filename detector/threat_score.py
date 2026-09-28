@@ -1,4 +1,4 @@
-def calculate_threat_score(cpu, memory, status):
+def calculate_threat_score(cpu, memory, status, anomaly=False):
 
     score = 0
 
@@ -9,6 +9,7 @@ def calculate_threat_score(cpu, memory, status):
         score += 30
 
     # Memory contribution
+    # memory_usage is recorded as percentage of system memory.
     if memory > 50:
         score += 30
     elif memory > 20:
@@ -20,6 +21,9 @@ def calculate_threat_score(cpu, memory, status):
 
     elif status == "SUSPICIOUS":
         score += 40
+
+    if anomaly:
+        score += 25
 
     # Limit max score
     if score > 100:
